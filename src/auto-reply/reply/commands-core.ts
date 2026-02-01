@@ -3,6 +3,7 @@ import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { routeReply } from "./route-reply.js";
+import { handleAgentCommand } from "./commands-agent.js";
 import { handleBashCommand } from "./commands-bash.js";
 import { handleCompactCommand } from "./commands-compact.js";
 import { handleConfigCommand, handleDebugCommand } from "./commands-config.js";
@@ -36,6 +37,7 @@ import type {
 const HANDLERS: CommandHandler[] = [
   // Plugin commands are processed first, before built-in commands
   handlePluginCommand,
+  handleAgentCommand,
   handleBashCommand,
   handleActivationCommand,
   handleSendPolicyCommand,

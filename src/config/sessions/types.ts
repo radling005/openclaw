@@ -52,6 +52,12 @@ export type SessionEntry = {
   providerOverride?: string;
   modelOverride?: string;
   authProfileOverride?: string;
+  /**
+   * Agent ID override for inline agent switching.
+   * When set, messages in this session are routed to the specified agent
+   * instead of using the default routing bindings.
+   */
+  agentOverride?: string;
   authProfileOverrideSource?: "auto" | "user";
   authProfileOverrideCompactionCount?: number;
   groupActivation?: "mention" | "always";

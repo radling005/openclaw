@@ -516,6 +516,20 @@ function buildChatCommands(): ChatCommandDefinition[] {
       ],
     }),
     defineChatCommand({
+      key: "agent",
+      nativeName: "agent",
+      description: "Show or switch the active agent.",
+      textAlias: "/agent",
+      category: "management",
+      args: [
+        {
+          name: "agent",
+          description: "Agent id to switch to, or 'reset' to clear override",
+          type: "string",
+        },
+      ],
+    }),
+    defineChatCommand({
       key: "models",
       nativeName: "models",
       description: "List model providers or provider models.",

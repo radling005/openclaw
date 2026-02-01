@@ -8,6 +8,7 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
 import { defaultRuntime } from "../../runtime.js";
+import { resolveEffectiveAgentId } from "../../routing/agent-override.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
 import type { MsgContext } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -34,16 +35,18 @@ export async function getReplyFromConfig(
   const targetSessionKey =
     ctx.CommandSource === "native" ? ctx.CommandTargetSessionKey?.trim() : undefined;
   const agentSessionKey = targetSessionKey || ctx.SessionKey;
-  const agentId = resolveSessionAgentId({
+
+  // Initial agent ID from session key - may be overridden after session load
+  let agentId = resolveSessionAgentId({
     sessionKey: agentSessionKey,
     config: cfg,
   });
   const agentCfg = cfg.agents?.defaults;
   const sessionCfg = cfg.session;
-  const { defaultProvider, defaultModel, aliasIndex } = resolveDefaultModel({
-    cfg,
-    agentId,
-  });
+
+  // Initial model defaults - will be re-resolved if agent override is active
+  let modelDefaults = resolveDefaultModel({ cfg, agentId });
+  let { defaultProvider, defaultModel, aliasIndex } = modelDefaults;
   let provider = defaultProvider;
   let model = defaultModel;
   if (opts?.isHeartbeat) {
@@ -61,13 +64,14 @@ export async function getReplyFromConfig(
     }
   }
 
-  const workspaceDirRaw = resolveAgentWorkspaceDir(cfg, agentId) ?? DEFAULT_AGENT_WORKSPACE_DIR;
-  const workspace = await ensureAgentWorkspace({
+  // Initial workspace/agent dir - will be re-resolved if agent override is active
+  let workspaceDirRaw = resolveAgentWorkspaceDir(cfg, agentId) ?? DEFAULT_AGENT_WORKSPACE_DIR;
+  let workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
     ensureBootstrapFiles: !agentCfg?.skipBootstrap && !isFastTestEnv,
   });
-  const workspaceDir = workspace.dir;
-  const agentDir = resolveAgentDir(cfg, agentId);
+  let workspaceDir = workspace.dir;
+  let agentDir = resolveAgentDir(cfg, agentId);
   const timeoutMs = resolveAgentTimeoutMs({ cfg });
   const configuredTypingSeconds =
     agentCfg?.typingIntervalSeconds ?? sessionCfg?.typingIntervalSeconds;
@@ -107,6 +111,39 @@ export async function getReplyFromConfig(
     cfg,
     commandAuthorized,
   });
+
+  // Check for inline agent override after session is loaded
+  const effectiveAgentId = resolveEffectiveAgentId({
+    cfg,
+    routeAgentId: agentId,
+    sessionEntry: sessionState.sessionEntry,
+  });
+
+  // If agent override is active, re-resolve agent-specific config
+  if (effectiveAgentId !== agentId) {
+    agentId = effectiveAgentId;
+
+    // Re-resolve model defaults for the overridden agent
+    modelDefaults = resolveDefaultModel({ cfg, agentId });
+    defaultProvider = modelDefaults.defaultProvider;
+    defaultModel = modelDefaults.defaultModel;
+    aliasIndex = modelDefaults.aliasIndex;
+
+    // Update provider/model if not already overridden by heartbeat
+    if (!opts?.isHeartbeat) {
+      provider = defaultProvider;
+      model = defaultModel;
+    }
+
+    // Re-resolve workspace and agent dir for the overridden agent
+    workspaceDirRaw = resolveAgentWorkspaceDir(cfg, agentId) ?? DEFAULT_AGENT_WORKSPACE_DIR;
+    workspace = await ensureAgentWorkspace({
+      dir: workspaceDirRaw,
+      ensureBootstrapFiles: !agentCfg?.skipBootstrap && !isFastTestEnv,
+    });
+    workspaceDir = workspace.dir;
+    agentDir = resolveAgentDir(cfg, agentId);
+  }
   let {
     sessionCtx,
     sessionEntry,
