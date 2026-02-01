@@ -7,6 +7,12 @@ import { ensureLoaded, persist } from "./store.js";
 
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
+/**
+ * Maximum number of attempts for one-shot "at" jobs before force-disabling.
+ * This is a safety mechanism to prevent infinite retry loops.
+ */
+const MAX_ONE_SHOT_ATTEMPTS = 3;
+
 export function armTimer(state: CronServiceState) {
   if (state.timer) {
     clearTimeout(state.timer);
@@ -59,6 +65,17 @@ export async function runDueJobs(state: CronServiceState) {
     if (typeof j.state.runningAtMs === "number") {
       return false;
     }
+    // Safety check: one-shot jobs that have already run should not be due.
+    // This catches cases where the job wasn't properly disabled.
+    if (j.schedule.kind === "at" && j.state.lastRunAtMs) {
+      state.deps.log.warn(
+        { jobId: j.id, lastRunAtMs: j.state.lastRunAtMs },
+        "cron: one-shot job has lastRunAtMs but is still enabled, disabling",
+      );
+      j.enabled = false;
+      j.state.nextRunAtMs = undefined;
+      return false;
+    }
     const next = j.state.nextRunAtMs;
     return typeof next === "number" && now >= next;
   });
@@ -73,6 +90,40 @@ export async function executeJob(
   nowMs: number,
   opts: { forced: boolean },
 ) {
+  const isOneShot = job.schedule.kind === "at";
+
+  // Safety check: if this one-shot job has already run, disable it and skip.
+  // This catches cases where the job wasn't properly disabled after a previous run.
+  if (isOneShot && !opts.forced) {
+    const attempts = job.state.failedAttempts ?? 0;
+    if (job.state.lastRunAtMs) {
+      state.deps.log.warn(
+        { jobId: job.id, lastRunAtMs: job.state.lastRunAtMs },
+        "cron: one-shot job already ran, disabling",
+      );
+      job.enabled = false;
+      job.state.nextRunAtMs = undefined;
+      return;
+    }
+    if (attempts >= MAX_ONE_SHOT_ATTEMPTS) {
+      state.deps.log.warn(
+        { jobId: job.id, attempts },
+        "cron: one-shot job exceeded max attempts, disabling",
+      );
+      job.enabled = false;
+      job.state.nextRunAtMs = undefined;
+      job.state.lastStatus = "error";
+      job.state.lastError = `exceeded max attempts (${MAX_ONE_SHOT_ATTEMPTS})`;
+      emit(state, {
+        jobId: job.id,
+        action: "finished",
+        status: "error",
+        error: job.state.lastError,
+      });
+      return;
+    }
+  }
+
   const startedAt = state.deps.nowMs();
   job.state.runningAtMs = startedAt;
   job.state.lastError = undefined;
@@ -102,6 +153,10 @@ export async function executeJob(
         // This prevents infinite retry loops when jobs are skipped (e.g., quiet-hours).
         job.enabled = false;
         job.state.nextRunAtMs = undefined;
+        // Track failed attempts for safety (in case the job is somehow re-enabled)
+        if (status !== "ok") {
+          job.state.failedAttempts = (job.state.failedAttempts ?? 0) + 1;
+        }
       } else if (job.enabled) {
         job.state.nextRunAtMs = computeJobNextRunAtMs(job, endedAt);
       } else {
@@ -225,7 +280,19 @@ export async function executeJob(
     await finish("error", String(err));
   } finally {
     job.updatedAtMs = nowMs;
-    if (!opts.forced && job.enabled && !deleted) {
+
+    // Safety: ensure one-shot jobs are disabled after any execution attempt.
+    // This is a defensive check in case finish() didn't complete properly.
+    if (isOneShot && !deleted) {
+      if (job.enabled) {
+        state.deps.log.warn(
+          { jobId: job.id },
+          "cron: one-shot job still enabled after execution, force-disabling",
+        );
+        job.enabled = false;
+      }
+      job.state.nextRunAtMs = undefined;
+    } else if (!opts.forced && job.enabled && !deleted) {
       // Keep nextRunAtMs in sync in case the schedule advanced during a long run.
       job.state.nextRunAtMs = computeJobNextRunAtMs(job, state.deps.nowMs());
     }

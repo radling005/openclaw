@@ -35,6 +35,9 @@ export function findJobOrThrow(state: CronServiceState, id: string) {
   return job;
 }
 
+/** Maximum number of attempts for one-shot "at" jobs before stopping. */
+const MAX_ONE_SHOT_ATTEMPTS = 3;
+
 export function computeJobNextRunAtMs(job: CronJob, nowMs: number): number | undefined {
   if (!job.enabled) {
     return undefined;
@@ -43,6 +46,10 @@ export function computeJobNextRunAtMs(job: CronJob, nowMs: number): number | und
     // One-shot "at" jobs: stop after any attempt (ok, skipped, or error).
     // This prevents infinite retry loops when jobs are skipped (e.g., quiet-hours).
     if (job.state.lastRunAtMs) {
+      return undefined;
+    }
+    // Safety: also stop if max attempts exceeded
+    if ((job.state.failedAttempts ?? 0) >= MAX_ONE_SHOT_ATTEMPTS) {
       return undefined;
     }
     return job.schedule.atMs;

@@ -121,6 +121,64 @@ describe("CronService", () => {
     await store.cleanup();
   });
 
+  it("disables one-shot job when heartbeat is skipped (prevents infinite retry)", async () => {
+    const store = await makeStorePath();
+    const enqueueSystemEvent = vi.fn();
+    const requestHeartbeatNow = vi.fn();
+
+    let now = 0;
+    const nowMs = () => {
+      now += 10;
+      return now;
+    };
+
+    // Simulate heartbeat being skipped (e.g., empty-heartbeat-file or quiet-hours)
+    const runHeartbeatOnce = vi.fn(async () => ({
+      status: "skipped" as const,
+      reason: "empty-heartbeat-file",
+    }));
+
+    const cron = new CronService({
+      storePath: store.storePath,
+      cronEnabled: true,
+      log: noopLogger,
+      nowMs,
+      enqueueSystemEvent,
+      requestHeartbeatNow,
+      runHeartbeatOnce,
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" })),
+    });
+
+    await cron.start();
+    const job = await cron.add({
+      name: "one-shot skipped test",
+      enabled: true,
+      schedule: { kind: "at", atMs: 1 },
+      sessionTarget: "main",
+      wakeMode: "now",
+      payload: { kind: "systemEvent", text: "hello" },
+    });
+
+    // Run the job
+    await cron.run(job.id, "force");
+
+    // Verify the job is disabled after being skipped
+    const jobs = await cron.list({ includeDisabled: true });
+    const updated = jobs.find((j) => j.id === job.id);
+    expect(updated?.enabled).toBe(false);
+    expect(updated?.state.lastStatus).toBe("skipped");
+    expect(updated?.state.lastError).toBe("empty-heartbeat-file");
+    expect(updated?.state.nextRunAtMs).toBeUndefined();
+    expect(updated?.state.failedAttempts).toBe(1);
+
+    // Running again should not execute (job is disabled)
+    const result = await cron.run(job.id, "due");
+    expect(result).toEqual({ ok: true, ran: false, reason: "not-due" });
+
+    cron.stop();
+    await store.cleanup();
+  });
+
   it("wakeMode now waits for heartbeat completion when available", async () => {
     const store = await makeStorePath();
     const enqueueSystemEvent = vi.fn();
