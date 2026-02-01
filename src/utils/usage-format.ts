@@ -84,3 +84,51 @@ export function estimateUsageCost(params: {
   }
   return total / 1_000_000;
 }
+
+/**
+ * Estimate CO2 emissions in grams based on token usage.
+ *
+ * Placeholder algorithm based on rough industry estimates:
+ * - ~0.0003 kg CO2 per 1000 tokens (input + output)
+ * - This accounts for GPU energy, data center PUE, and average grid carbon intensity
+ *
+ * Reference: Various LLM carbon footprint studies suggest 0.1-0.5g CO2 per query,
+ * with typical queries being 500-2000 tokens total.
+ */
+export function estimateCarbonGrams(params: {
+  usage?: NormalizedUsage | UsageTotals | null;
+}): number | undefined {
+  const usage = params.usage;
+  if (!usage) {
+    return undefined;
+  }
+  const input = toNumber(usage.input);
+  const output = toNumber(usage.output);
+  const totalTokens = input + output;
+  if (totalTokens === 0) {
+    return undefined;
+  }
+  // ~0.3g CO2 per 1000 tokens (0.0003 kg = 0.3g)
+  const co2Grams = (totalTokens / 1000) * 0.3;
+  return co2Grams;
+}
+
+/**
+ * Format carbon emissions for display.
+ * Shows in grams for small amounts, kg for larger.
+ */
+export function formatCarbon(grams?: number): string | undefined {
+  if (grams === undefined || !Number.isFinite(grams)) {
+    return undefined;
+  }
+  if (grams >= 1000) {
+    return `${(grams / 1000).toFixed(2)}kg CO₂`;
+  }
+  if (grams >= 1) {
+    return `${grams.toFixed(1)}g CO₂`;
+  }
+  if (grams >= 0.01) {
+    return `${grams.toFixed(2)}g CO₂`;
+  }
+  return `${grams.toFixed(3)}g CO₂`;
+}

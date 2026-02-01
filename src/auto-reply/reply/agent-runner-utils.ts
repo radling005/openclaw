@@ -4,7 +4,13 @@ import type { ChannelId, ChannelThreadingToolContext } from "../../channels/plug
 import { normalizeAnyChannelId, normalizeChannelId } from "../../channels/registry.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
-import { estimateUsageCost, formatTokenCount, formatUsd } from "../../utils/usage-format.js";
+import {
+  estimateCarbonGrams,
+  estimateUsageCost,
+  formatCarbon,
+  formatTokenCount,
+  formatUsd,
+} from "../../utils/usage-format.js";
 import type { TemplateContext } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
 import type { FollowupRun } from "./queue.js";
@@ -105,7 +111,20 @@ export const formatResponseUsageLine = (params: {
         })
       : undefined;
   const costLabel = params.showCost ? formatUsd(cost) : undefined;
-  const suffix = costLabel ? ` · est ${costLabel}` : "";
+
+  // Estimate carbon emissions
+  const carbonGrams = estimateCarbonGrams({ usage });
+  const carbonLabel = formatCarbon(carbonGrams);
+
+  // Build suffix with cost and carbon
+  const parts: string[] = [];
+  if (costLabel) {
+    parts.push(`est ${costLabel}`);
+  }
+  if (carbonLabel) {
+    parts.push(`~${carbonLabel}`);
+  }
+  const suffix = parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
   return `Usage: ${inputLabel} in / ${outputLabel} out${suffix}`;
 };
 
