@@ -97,8 +97,9 @@ export async function executeJob(
       job.schedule.kind === "at" && status === "ok" && job.deleteAfterRun === true;
 
     if (!shouldDelete) {
-      if (job.schedule.kind === "at" && status === "ok") {
-        // One-shot job completed successfully; disable it.
+      if (job.schedule.kind === "at") {
+        // One-shot "at" jobs: disable after any attempt (ok, skipped, or error).
+        // This prevents infinite retry loops when jobs are skipped (e.g., quiet-hours).
         job.enabled = false;
         job.state.nextRunAtMs = undefined;
       } else if (job.enabled) {
